@@ -62,6 +62,7 @@ await foreach (var packet in stream.ReadOscPacketsAsync())
 - A received message with no type tag string and no argument data decodes as a message with no arguments, as the spec asks robust implementations to do. Unknown type tags are rejected with `OscException`.
 - `OscAddressSpace.Dispatch` runs handlers synchronously and passes each message its bundle's time tag; scheduling future time tags is left to the caller. This matches OSC 1.1, which deliberately leaves time tag semantics unspecified beyond the format and the "immediately" value.
 - `OscPacket` equality compares binary encodings.
+- Bundles inside bundles, and arrays inside arguments, may nest at most `OscPacket.MaxNestingDepth` (64) levels; deeper input is rejected with `OscException` (or `ArgumentException` when constructing), so hostile packets cannot exhaust the stack. `OscMessage` copies nested lists, so changing them after construction does not affect the message.
 
 ## Build and test
 

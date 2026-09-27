@@ -42,9 +42,78 @@ public sealed class OscAddressPattern
     public bool IsMatch(string address)
     {
         ArgumentNullException.ThrowIfNull(address);
-        // memo[t, p]: 0 = unknown, 1 = matches, 2 = does not match.
-        var memo = new byte[_tokens.Length + 1, address.Length + 1];
-        return Match(0, 0, address, memo);
+        // Dynamic programming over tokens from last to first, without recursion, so that a hostile
+        // pattern (e.g. thousands of "{}") cannot exhaust the stack. After processing token t,
+        // cur[p] says whether tokens t.. match address[p..]; next holds the same for tokens t+1...
+        var length = address.Length;
+        var next = new bool[length + 1];
+        var cur = new bool[length + 1];
+        next[length] = true;
+        for (var t = _tokens.Length - 1; t >= 0; t--)
+        {
+            var token = _tokens[t];
+            switch (token.Kind)
+            {
+                case TokenKind.Literal:
+                    for (var p = 0; p <= length; p++)
+                        cur[p] = p < length && address[p] == token.Char && next[p + 1];
+                    break;
+                case TokenKind.AnyChar:
+                    for (var p = 0; p <= length; p++)
+                        cur[p] = p < length && address[p] != '/' && next[p + 1];
+                    break;
+                case TokenKind.CharClass:
+                    for (var p = 0; p <= length; p++)
+                        cur[p] = p < length && address[p] != '/' && token.MatchesClass(address[p]) && next[p + 1];
+                    break;
+                case TokenKind.Star:
+                    // Either match nothing here, or consume one non-'/' character and stay on the star.
+                    cur[length] = next[length];
+                    for (var p = length - 1; p >= 0; p--)
+                        cur[p] = next[p] || (address[p] != '/' && cur[p + 1]);
+                    break;
+                case TokenKind.PathTraversal:
+                {
+                    // Consumes a '/' plus any number of whole parts, ending at a '/' boundary:
+                    // matches at p if address[p] is '/' and some '/' at q >= p has next[q + 1].
+                    cur[length] = false;
+                    var anyBoundary = false;
+                    for (var p = length - 1; p >= 0; p--)
+                    {
+                        if (address[p] == '/')
+                        {
+                            anyBoundary |= next[p + 1];
+                            cur[p] = anyBoundary;
+                        }
+                        else
+                        {
+                            cur[p] = false;
+                        }
+                    }
+                    break;
+                }
+                case TokenKind.Alternatives:
+                    for (var p = 0; p <= length; p++)
+                    {
+                        cur[p] = false;
+                        foreach (var alt in token.Alternatives!)
+                        {
+                            if (p + alt.Length <= length
+                                && string.CompareOrdinal(address, p, alt, 0, alt.Length) == 0
+                                && next[p + alt.Length])
+                            {
+                                cur[p] = true;
+                                break;
+                            }
+                        }
+                    }
+                    break;
+                default:
+                    throw new InvalidOperationException();
+            }
+            (cur, next) = (next, cur);
+        }
+        return next[0];
     }
 
     /// <summary>Tests whether <paramref name="pattern"/> matches <paramref name="address"/>.</summary>
@@ -52,71 +121,6 @@ public sealed class OscAddressPattern
 
     /// <inheritdoc />
     public override string ToString() => Pattern;
-
-    private bool Match(int t, int p, string address, byte[,] memo)
-    {
-        if (memo[t, p] != 0)
-            return memo[t, p] == 1;
-
-        bool result;
-        if (t == _tokens.Length)
-        {
-            result = p == address.Length;
-        }
-        else
-        {
-            var token = _tokens[t];
-            switch (token.Kind)
-            {
-                case TokenKind.Literal:
-                    result = p < address.Length && address[p] == token.Char && Match(t + 1, p + 1, address, memo);
-                    break;
-                case TokenKind.AnyChar:
-                    result = p < address.Length && address[p] != '/' && Match(t + 1, p + 1, address, memo);
-                    break;
-                case TokenKind.Star:
-                    result = false;
-                    for (var end = p; ; end++)
-                    {
-                        if (Match(t + 1, end, address, memo)) { result = true; break; }
-                        if (end == address.Length || address[end] == '/') break;
-                    }
-                    break;
-                case TokenKind.CharClass:
-                    result = p < address.Length && address[p] != '/' && token.MatchesClass(address[p]) && Match(t + 1, p + 1, address, memo);
-                    break;
-                case TokenKind.PathTraversal:
-                    // Consumes a '/' plus any number of whole parts, ending at a '/' boundary.
-                    result = false;
-                    if (p < address.Length && address[p] == '/')
-                    {
-                        for (var q = p; q < address.Length; q++)
-                        {
-                            if (address[q] == '/' && Match(t + 1, q + 1, address, memo)) { result = true; break; }
-                        }
-                    }
-                    break;
-                case TokenKind.Alternatives:
-                    result = false;
-                    foreach (var alt in token.Alternatives!)
-                    {
-                        if (p + alt.Length <= address.Length
-                            && string.CompareOrdinal(address, p, alt, 0, alt.Length) == 0
-                            && Match(t + 1, p + alt.Length, address, memo))
-                        {
-                            result = true;
-                            break;
-                        }
-                    }
-                    break;
-                default:
-                    throw new InvalidOperationException();
-            }
-        }
-
-        memo[t, p] = result ? (byte)1 : (byte)2;
-        return result;
-    }
 
     private static Token[] Compile(string pattern)
     {

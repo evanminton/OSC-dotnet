@@ -13,6 +13,12 @@ public abstract class OscPacket : IEquatable<OscPacket>
 {
     private protected OscPacket() { }
 
+    /// <summary>
+    /// The deepest nesting allowed for bundles inside bundles, and for arrays inside a message's
+    /// arguments. Deeper packets are rejected so that hostile input cannot exhaust the stack.
+    /// </summary>
+    public const int MaxNestingDepth = 64;
+
     /// <summary>Encodes the packet into a new byte array. The length is always a multiple of 4.</summary>
     public byte[] ToBytes()
     {
@@ -36,8 +42,11 @@ public abstract class OscPacket : IEquatable<OscPacket>
     /// Decodes an OSC packet. The first byte decides the kind: <c>#</c> starts a bundle
     /// (<c>#bundle</c>) and <c>/</c> starts a message.
     /// </summary>
-    /// <exception cref="OscException">The bytes are not a well-formed OSC 1.0 packet.</exception>
-    public static OscPacket Parse(ReadOnlySpan<byte> data)
+    /// <exception cref="OscException">The bytes are not a well-formed OSC 1.0 packet, or nest deeper than <see cref="MaxNestingDepth"/>.</exception>
+    public static OscPacket Parse(ReadOnlySpan<byte> data) => Parse(data, bundleDepth: 1);
+
+    /// <summary>Decodes a packet that, if it is a bundle, sits at nesting level <paramref name="bundleDepth"/>.</summary>
+    internal static OscPacket Parse(ReadOnlySpan<byte> data, int bundleDepth)
     {
         if (data.Length == 0)
             throw new OscException("An OSC packet cannot be empty.");
@@ -46,7 +55,7 @@ public abstract class OscPacket : IEquatable<OscPacket>
 
         return data[0] switch
         {
-            (byte)'#' => OscBundle.ParseBody(data),
+            (byte)'#' => OscBundle.ParseBody(data, bundleDepth),
             (byte)'/' => OscMessage.ParseBody(data),
             _ => throw new OscException($"An OSC packet must start with '/' or '#', not 0x{data[0]:X2}."),
         };

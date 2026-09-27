@@ -32,7 +32,10 @@ public sealed class OscMessage : OscPacket
     /// <summary>Creates a message.</summary>
     /// <param name="address">The OSC address pattern; must start with '/'.</param>
     /// <param name="arguments">The arguments, in order.</param>
-    /// <exception cref="ArgumentException">The address is invalid or an argument has an unsupported type.</exception>
+    /// <remarks>Nested lists are copied (as <c>object?[]</c>), so changing them afterwards does not affect the message.</remarks>
+    /// <exception cref="ArgumentException">
+    /// The address is invalid, an argument has an unsupported type, or arrays nest deeper than <see cref="OscPacket.MaxNestingDepth"/>.
+    /// </exception>
     public OscMessage(string address, params IEnumerable<object?> arguments)
     {
         ArgumentNullException.ThrowIfNull(address);
@@ -45,8 +48,8 @@ public sealed class OscMessage : OscPacket
         Address = address;
         var args = arguments.ToArray();
         var tags = new StringBuilder(",", args.Length + 1);
-        foreach (var arg in args)
-            AppendTypeTag(tags, arg);
+        for (var i = 0; i < args.Length; i++)
+            args[i] = AppendTypeTag(tags, args[i], depth: 0);
         Arguments = args;
         TypeTags = tags.ToString();
     }
@@ -87,7 +90,8 @@ public sealed class OscMessage : OscPacket
         _ => value.ToString() ?? "",
     };
 
-    private static void AppendTypeTag(StringBuilder tags, object? arg)
+    /// <summary>Appends the type tag for <paramref name="arg"/> and returns the value to store: the argument itself, or a copy of a list.</summary>
+    private static object? AppendTypeTag(StringBuilder tags, object? arg, int depth)
     {
         switch (arg)
         {
@@ -115,14 +119,18 @@ public sealed class OscMessage : OscPacket
             case bool b: tags.Append(b ? 'T' : 'F'); break;
             case OscImpulse: tags.Append('I'); break;
             case IList list:
+                if (depth >= MaxNestingDepth)
+                    throw new ArgumentException($"Array arguments cannot nest more than {MaxNestingDepth} deep.");
                 tags.Append('[');
-                foreach (var item in list)
-                    AppendTypeTag(tags, item);
+                var copy = new object?[list.Count];
+                for (var i = 0; i < copy.Length; i++)
+                    copy[i] = AppendTypeTag(tags, list[i], depth + 1);
                 tags.Append(']');
-                break;
+                return copy;
             default:
                 throw new ArgumentException($"Arguments of type {arg.GetType().FullName} cannot be encoded as OSC.");
         }
+        return arg;
     }
 
     internal override void Write(ref OscWriter writer)
@@ -173,14 +181,17 @@ public sealed class OscMessage : OscPacket
 
         var typeTags = reader.ReadString();
         var index = 1;
-        var args = ReadArguments(ref reader, typeTags, ref index, nested: false);
+        var args = ReadArguments(ref reader, typeTags, ref index, depth: 0);
         if (!reader.IsAtEnd)
             throw new OscException($"Message {address} has {reader.Remaining} bytes left over after its arguments.");
         return new OscMessage(address, args, typeTags);
     }
 
-    private static object?[] ReadArguments(ref OscReader reader, string tags, ref int index, bool nested)
+    private static object?[] ReadArguments(ref OscReader reader, string tags, ref int index, int depth)
     {
+        var nested = depth > 0;
+        if (depth > MaxNestingDepth)
+            throw new OscException($"Arrays nest more than {MaxNestingDepth} deep in type tag string.");
         var args = new List<object?>();
         while (index < tags.Length)
         {
@@ -212,7 +223,7 @@ public sealed class OscMessage : OscPacket
                 case 'F': args.Add(false); break;
                 case 'N': args.Add(null); break;
                 case 'I': args.Add(OscImpulse.Value); break;
-                case '[': args.Add(ReadArguments(ref reader, tags, ref index, nested: true)); break;
+                case '[': args.Add(ReadArguments(ref reader, tags, ref index, depth + 1)); break;
                 case ']':
                     if (!nested)
                         throw new OscException($"Unmatched ']' in type tag string \"{tags}\".");
