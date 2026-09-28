@@ -87,12 +87,24 @@ public class HostileInputTests
         Assert.Throws<ArgumentException>(() => new OscMessage("/a", (object?)new object?[] { value }));
     }
 
-    [Fact]
-    public void Self_referencing_list_throws_instead_of_overflowing()
+    [Theory]
+    [InlineData(1)]
+    [InlineData(2)]  // the depth-first copy reaches the depth limit on the first branch, so this fails fast
+    [InlineData(10)]
+    public void Self_referencing_list_throws_instead_of_overflowing(int selfReferences)
     {
         var list = new List<object?>();
-        list.Add(list);
+        for (var i = 0; i < selfReferences; i++)
+            list.Add(list);
         Assert.Throws<ArgumentException>(() => new OscMessage("/a", (object?)list));
+    }
+
+    [Fact]
+    public void List_shared_between_siblings_is_not_a_cycle()
+    {
+        var shared = new List<object?> { 1 };
+        var message = new OscMessage("/a", (object?)new List<object?> { shared, shared });
+        Assert.Equal(",[[i][i]]", message.TypeTags);
     }
 
     [Fact]
