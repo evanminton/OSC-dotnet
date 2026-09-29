@@ -44,7 +44,7 @@ space.Dispatch(OscPacket.Parse(bundle.ToBytes()));
 | `h` | `long` | `T` / `F` | `bool` |
 | `t` | `OscTimeTag` | `N` | `null` |
 | `d` | `double` | `I` | `OscImpulse` |
-| `[ ]` | `object?[]` (any `IList` when encoding) | | |
+| `[ ]` | read-only `IReadOnlyList<object?>` (any `IList` when encoding; `Get<object?[]>` returns a copy) | | |
 
 ### Streams (TCP, serial)
 
@@ -64,7 +64,7 @@ await foreach (var packet in stream.ReadOscPacketsAsync())
 - `OscPacket` equality compares binary encodings.
 - Malformed address patterns (an unclosed `[` or `{`, or `/` inside `{}`) are rejected when a message is constructed (`ArgumentException`) or decoded (`OscException`), so `OscAddressSpace.Dispatch` never meets one. A decoded `c` argument outside the range of a .NET `char` is rejected with `OscException`.
 - The constructor takes `params IEnumerable<object?>`, so a single `object?[]`, `string[]` or other list of reference types is taken as the whole argument list. To send it as one array argument, cast it to `object`: `new OscMessage("/names", (object)names)` gives `,[ss]` rather than `,ss`.
-- Bundles inside bundles, and arrays inside arguments, may nest at most `OscPacket.MaxNestingDepth` (64) levels; deeper input is rejected with `OscException` (or `ArgumentException` when constructing), so hostile packets cannot exhaust the stack. `OscMessage` copies nested lists and blobs, so changing them after construction does not affect the message.
+- Bundles inside bundles, and arrays inside arguments, may nest at most `OscPacket.MaxNestingDepth` (64) levels; deeper input is rejected with `OscException` (or `ArgumentException` when constructing), so hostile packets cannot exhaust the stack. `OscMessage` copies nested lists and blobs, so changing them after construction does not affect the message. Arguments are read back as read-only lists and `ReadOnlyMemory<byte>`, so nothing that reads a message can change it either.
 
 - `ReadOscPacketsAsync` skips frames that are not well-formed OSC packets and keeps reading; pass `onInvalidPacket` to see the errors. A truncated or oversized length-prefixed frame still throws, since the stream cannot be resynchronized.
 
