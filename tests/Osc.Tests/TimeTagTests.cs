@@ -45,10 +45,54 @@ public class TimeTagTests
     }
 
     [Fact]
-    public void Times_outside_era_zero_are_rejected()
+    public void Times_after_2036_wrap_into_era_one()
     {
+        var wrap = new DateTime(2036, 2, 7, 6, 28, 16, DateTimeKind.Utc);
+        Assert.Equal(new OscTimeTag(0, 0), OscTimeTag.FromDateTime(wrap));
+        Assert.Equal(new OscTimeTag(uint.MaxValue, 0), OscTimeTag.FromDateTime(wrap.AddSeconds(-1)));
+
+        var time = new DateTime(2040, 6, 1, 12, 0, 0, DateTimeKind.Utc).AddTicks(1234567);
+        var tag = OscTimeTag.FromDateTime(time);
+        Assert.Equal((uint)(time - wrap).TotalSeconds, tag.Seconds);
+        Assert.Equal(time, tag.ToDateTime());
+    }
+
+    [Fact]
+    public void Range_runs_from_1968_to_2104()
+    {
+        Assert.Equal(new DateTime(1968, 1, 20, 3, 14, 8, DateTimeKind.Utc), OscTimeTag.MinDateTime);
+        Assert.Equal(new DateTime(2104, 2, 26, 9, 42, 24, DateTimeKind.Utc), OscTimeTag.MaxDateTimeExclusive);
+
+        Assert.Equal(OscTimeTag.MinDateTime, OscTimeTag.FromDateTime(OscTimeTag.MinDateTime).ToDateTime());
+        Assert.Equal(new OscTimeTag(0x80000000, 0), OscTimeTag.FromDateTime(OscTimeTag.MinDateTime));
+        var last = OscTimeTag.MaxDateTimeExclusive.AddSeconds(-1);
+        Assert.Equal(last, OscTimeTag.FromDateTime(last).ToDateTime());
+        Assert.Equal(new OscTimeTag(0x7FFFFFFF, 0), OscTimeTag.FromDateTime(last));
+
+        Assert.Throws<ArgumentOutOfRangeException>(() => OscTimeTag.FromDateTime(OscTimeTag.MinDateTime.AddTicks(-1)));
+        Assert.Throws<ArgumentOutOfRangeException>(() => OscTimeTag.FromDateTime(OscTimeTag.MaxDateTimeExclusive));
         Assert.Throws<ArgumentOutOfRangeException>(() => OscTimeTag.FromDateTime(new DateTime(1899, 12, 31, 0, 0, 0, DateTimeKind.Utc)));
-        Assert.Throws<ArgumentOutOfRangeException>(() => OscTimeTag.FromDateTime(new DateTime(2037, 1, 1, 0, 0, 0, DateTimeKind.Utc)));
+    }
+
+    [Fact]
+    public void Comparison_stays_chronological_across_the_wrap()
+    {
+        var before = OscTimeTag.FromDateTime(new DateTime(2036, 1, 1, 0, 0, 0, DateTimeKind.Utc));
+        var after = OscTimeTag.FromDateTime(new DateTime(2037, 1, 1, 0, 0, 0, DateTimeKind.Utc));
+        Assert.True(before.Value > after.Value);
+        Assert.True(before < after);
+        Assert.True(after >= before);
+        Assert.Equal(-1, before.CompareTo(after));
+        Assert.Equal(0, after.CompareTo(after));
+    }
+
+    [Fact]
+    public void Immediate_sorts_before_every_other_time_tag()
+    {
+        Assert.True(OscTimeTag.Immediate < new OscTimeTag(0));
+        Assert.True(OscTimeTag.Immediate < new OscTimeTag(0x80000000, 0));
+        Assert.True(OscTimeTag.Immediate < OscTimeTag.Now);
+        Assert.Equal("Immediate", OscTimeTag.Immediate.ToString());
     }
 
     [Fact]

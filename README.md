@@ -4,7 +4,7 @@ A .NET 10 class library implementing [Open Sound Control 1.0](https://opensoundc
 
 - **Messages and bundles**: `OscMessage`, `OscBundle`, encoded with `ToBytes()` / `WriteTo(IBufferWriter<byte>)` and decoded with `OscPacket.Parse` / `TryParse`.
 - **Type tags**: all required types (`i f s b`) and the spec's non-standard types (`h t d S c r m T F N I [ ]`), mapped to plain .NET values.
-- **Time tags**: `OscTimeTag` (NTP format) with `Immediate` and `DateTime` conversion.
+- **Time tags**: `OscTimeTag` (NTP format) with `Immediate` and `DateTime` conversion, wrapping past 2036 as RFC 4330 does.
 - **Address patterns**: `OscAddressPattern` supports `?`, `*`, `[a-z]`, `[!…]` and `{foo,bar}`; wildcards never cross `/`.
 - **OSC 1.1 `//` wildcard**: matches any number of address levels, so `//spherical` matches `/position/spherical`.
 - **OSC 1.1 stream framing**: `OscSlip` / `OscSlipDecoder` implement SLIP (RFC 1055) with double END; `stream.WriteOscPacketAsync` / `ReadOscPacketsAsync` use SLIP by default and the 1.0 int32 size prefix via `OscFraming.LengthPrefixed`.
@@ -62,6 +62,7 @@ await foreach (var packet in stream.ReadOscPacketsAsync())
 - A received message with no type tag string and no argument data decodes as a message with no arguments, as the spec asks robust implementations to do. Unknown type tags are rejected with `OscException`.
 - `OscAddressSpace.Dispatch` runs handlers synchronously and passes each message its bundle's time tag; scheduling future time tags is left to the caller. If handlers throw, the rest still run and the exceptions are rethrown together as one `AggregateException`. This matches OSC 1.1, which deliberately leaves time tag semantics unspecified beyond the format and the "immediately" value.
 - `OscPacket` equality compares binary encodings.
+- NTP's 32-bit seconds run out on 2036-02-07T06:28:16Z. Following RFC 4330, seconds with the top bit set count from 1900 and seconds with it clear count from 2036, so `OscTimeTag` covers 1968-01-20 to 2104-02-26 (`MinDateTime` / `MaxDateTimeExclusive`). Comparisons stay chronological across the wrap, and `Immediate` sorts first.
 - Malformed address patterns (an unclosed `[` or `{`, or `/` inside `{}`) are rejected when a message is constructed (`ArgumentException`) or decoded (`OscException`), so `OscAddressSpace.Dispatch` never meets one. A decoded `c` argument outside the range of a .NET `char` is rejected with `OscException`.
 - The constructor takes `params IEnumerable<object?>`, so a single `object?[]`, `string[]` or other list of reference types is taken as the whole argument list. To send it as one array argument, cast it to `object`: `new OscMessage("/names", (object)names)` gives `,[ss]` rather than `,ss`.
 - Bundles inside bundles, and arrays inside arguments, may nest at most `OscPacket.MaxNestingDepth` (64) levels; deeper input is rejected with `OscException` (or `ArgumentException` when constructing), so hostile packets cannot exhaust the stack. `OscMessage` copies nested lists and blobs, so changing them after construction does not affect the message. Arguments are read back as read-only lists and `ReadOnlyMemory<byte>`, so nothing that reads a message can change it either.
