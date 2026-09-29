@@ -29,7 +29,7 @@
         <CollectionView x:Name="Log" Grid.Row="4" ItemsUpdatingScrollMode="KeepLastItemInView">
             <CollectionView.ItemTemplate>
                 <DataTemplate x:DataType="x:String">
-                    <Label Text="{Binding .}" FontFamily="Consolas" FontSize="13" Padding="0,2" />
+                    <Label Text="{Binding .}" FontFamily="{OnPlatform WinUI=Consolas, MacCatalyst=Menlo}" FontSize="13" Padding="0,2" />
                 </DataTemplate>
             </CollectionView.ItemTemplate>
         </CollectionView>
