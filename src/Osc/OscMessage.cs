@@ -1,4 +1,5 @@
 using System.Collections;
+using System.Collections.ObjectModel;
 using System.Text;
 
 namespace Osc;
@@ -24,7 +25,7 @@ namespace Osc;
 ///   <item><term><see cref="bool"/></term><description><c>T</c> / <c>F</c></description></item>
 ///   <item><term><see langword="null"/></term><description><c>N</c> nil</description></item>
 ///   <item><term><see cref="OscImpulse"/></term><description><c>I</c> infinitum</description></item>
-///   <item><term><see cref="object"/>[] (any non-byte <see cref="IList"/>)</term><description><c>[</c> … <c>]</c> array (decoded as object?[])</description></item>
+///   <item><term><see cref="object"/>[] (any non-byte <see cref="IList"/>)</term><description><c>[</c> … <c>]</c> array (stored and decoded as a read-only <see cref="IReadOnlyList{T}"/> of <see cref="object"/>)</description></item>
 /// </list>
 /// </remarks>
 public sealed class OscMessage : OscPacket
@@ -37,8 +38,9 @@ public sealed class OscMessage : OscPacket
     /// array argument instead, cast it to <see cref="object"/>: <c>new OscMessage("/a", (object)names)</c>.
     /// </param>
     /// <remarks>
-    /// Nested lists (as <c>object?[]</c>) and blobs (as <see cref="ReadOnlyMemory{T}"/> of <see cref="byte"/>) are
-    /// copied, so changing them afterwards does not affect the message.
+    /// Nested lists and blobs are copied, into read-only lists and <see cref="ReadOnlyMemory{T}"/> of
+    /// <see cref="byte"/>, so changing them afterwards does not affect the message, and neither can
+    /// anyone who reads the message's arguments.
     /// </remarks>
     /// <exception cref="ArgumentException">
     /// The address is invalid or a malformed pattern (e.g. an unclosed '[' or '{'), an argument has an
@@ -60,21 +62,21 @@ public sealed class OscMessage : OscPacket
         var tags = new StringBuilder(",", args.Length + 1);
         for (var i = 0; i < args.Length; i++)
             args[i] = AppendTypeTag(tags, args[i], depth: 0);
-        Arguments = args;
+        Arguments = Array.AsReadOnly(args);
         TypeTags = tags.ToString();
     }
 
     private OscMessage(string address, object?[] arguments, string typeTags)
     {
         Address = address;
-        Arguments = arguments;
+        Arguments = Array.AsReadOnly(arguments);
         TypeTags = typeTags;
     }
 
     /// <summary>The OSC address pattern, e.g. <c>/mixer/channel/1/gain</c>. It may contain pattern characters.</summary>
     public string Address { get; }
 
-    /// <summary>The arguments, in order.</summary>
+    /// <summary>The arguments, in order. Array arguments are read-only <see cref="IReadOnlyList{T}"/>s of <see cref="object"/>.</summary>
     public IReadOnlyList<object?> Arguments { get; }
 
     /// <summary>The OSC type tag string, including the leading comma, e.g. <c>,ifs</c>.</summary>
@@ -82,7 +84,8 @@ public sealed class OscMessage : OscPacket
 
     /// <summary>Gets the argument at <paramref name="index"/> as <typeparamref name="T"/>.</summary>
     /// <remarks>
-    /// Blobs are stored as <see cref="ReadOnlyMemory{T}"/> of <see cref="byte"/>; asking for a <c>byte[]</c>
+    /// Blobs are stored as <see cref="ReadOnlyMemory{T}"/> of <see cref="byte"/> and arrays as read-only
+    /// <see cref="IReadOnlyList{T}"/>s of <see cref="object"/>. Asking for a <c>byte[]</c> or an <c>object?[]</c>
     /// returns a new copy, so changing it does not affect the message.
     /// </remarks>
     /// <exception cref="InvalidCastException">The argument is not a <typeparamref name="T"/>.</exception>
@@ -90,6 +93,7 @@ public sealed class OscMessage : OscPacket
     {
         T value => value,
         ReadOnlyMemory<byte> blob when typeof(T) == typeof(byte[]) => (T)(object)blob.ToArray(),
+        ReadOnlyCollection<object?> array when typeof(T) == typeof(object?[]) => (T)(object)array.ToArray(),
         var other => throw new InvalidCastException($"Argument {index} of {Address} is {other?.GetType().Name ?? "null"}, not {typeof(T).Name}."),
     };
 
@@ -102,7 +106,7 @@ public sealed class OscMessage : OscPacket
         null => "nil",
         string s => $"\"{s}\"",
         ReadOnlyMemory<byte> b => $"blob[{b.Length}]",
-        object?[] a => $"[{string.Join(" ", a.Select(Format))}]",
+        ReadOnlyCollection<object?> a => $"[{string.Join(" ", a.Select(Format))}]",
         IFormattable f => f.ToString(null, System.Globalization.CultureInfo.InvariantCulture),
         _ => value.ToString() ?? "",
     };
@@ -147,7 +151,7 @@ public sealed class OscMessage : OscPacket
                 for (var i = 0; i < copy.Length; i++)
                     copy[i] = AppendTypeTag(tags, list[i], depth + 1);
                 tags.Append(']');
-                return copy;
+                return Array.AsReadOnly(copy);
             default:
                 throw new ArgumentException($"Arguments of type {arg.GetType().FullName} cannot be encoded as OSC.");
         }
@@ -256,7 +260,7 @@ public sealed class OscMessage : OscPacket
                 case 'F': args.Add(false); break;
                 case 'N': args.Add(null); break;
                 case 'I': args.Add(OscImpulse.Value); break;
-                case '[': args.Add(ReadArguments(ref reader, tags, ref index, depth + 1)); break;
+                case '[': args.Add(Array.AsReadOnly(ReadArguments(ref reader, tags, ref index, depth + 1))); break;
                 case ']':
                     if (!nested)
                         throw new OscException($"Unmatched ']' in type tag string \"{tags}\".");

@@ -89,8 +89,39 @@ public class MessageTests
         var array = decoded.Get<object?[]>(1);
         Assert.Equal(2, array[0]);
         Assert.Equal("two", array[1]);
-        Assert.Equal(new object?[] { 3f, true }, Assert.IsType<object?[]>(array[2]));
+        Assert.Equal(new object?[] { 3f, true }, Assert.IsAssignableFrom<IReadOnlyList<object?>>(array[2]));
         Assert.Equal(4, decoded.Get<int>(2));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void Arrays_cannot_be_changed_through_the_message(bool decode)
+    {
+        var message = new OscMessage("/arr", (object)new object?[] { 1, new object?[] { 2 } });
+        if (decode)
+            message = RoundTrip(message);
+        var bytes = message.ToBytes();
+
+        var array = Assert.IsAssignableFrom<IReadOnlyList<object?>>(message.Arguments[0]);
+        Assert.IsNotType<object?[]>(array);
+        Assert.IsNotType<object?[]>(message.Arguments);
+        Assert.Throws<NotSupportedException>(() => ((IList<object?>)array)[0] = "changed");
+
+        var copy = message.Get<object?[]>(0);
+        copy[0] = "changed";
+        Assert.NotSame(copy, message.Get<object?[]>(0));
+        Assert.Equal(1, message.Get<IReadOnlyList<object?>>(0)[0]);
+        Assert.Equal(bytes, message.ToBytes());
+    }
+
+    [Fact]
+    public void Arguments_of_one_message_can_build_another()
+    {
+        var message = RoundTrip(new OscMessage("/arr", 1, (object)new object?[] { 2, new object?[] { 3f } }));
+        var copy = new OscMessage("/copy", message.Arguments.ToArray());
+        Assert.Equal(",i[i[f]]", copy.TypeTags);
+        Assert.Equal("/copy ,i[i[f]] 1 [2 [3]]", copy.ToString());
     }
 
     [Fact]
