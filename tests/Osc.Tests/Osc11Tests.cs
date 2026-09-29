@@ -126,6 +126,35 @@ public class Osc11Tests
     }
 
     [Theory]
+    [InlineData(OscFraming.Slip)]
+    [InlineData(OscFraming.LengthPrefixed)]
+    public async Task Malformed_packets_are_skipped_and_reported(OscFraming framing)
+    {
+        var bad = new OscMessage("/bad", 1).ToBytes()[..^4]; // type tags promise an int that is missing
+        using var stream = new MemoryStream();
+        await stream.WriteOscPacketAsync(new OscMessage("/first"), framing);
+        if (framing == OscFraming.Slip)
+        {
+            stream.Write(OscSlip.Encode(bad));
+        }
+        else
+        {
+            stream.Write(new byte[] { 0, 0, 0, (byte)bad.Length });
+            stream.Write(bad);
+        }
+        await stream.WriteOscPacketAsync(new OscMessage("/second"), framing);
+        stream.Position = 0;
+
+        var errors = new List<OscException>();
+        var read = new List<string>();
+        await foreach (var packet in stream.ReadOscPacketsAsync(framing, onInvalidPacket: errors.Add))
+            read.Add(((OscMessage)packet).Address);
+
+        Assert.Equal(["/first", "/second"], read);
+        Assert.Single(errors);
+    }
+
+    [Theory]
     [InlineData(",ifsbTFNIt", true)]
     [InlineData("ifsb", true)]
     [InlineData(",", true)]
