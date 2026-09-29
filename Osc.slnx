@@ -1,4 +1,7 @@
 <Solution>
+  <Folder Name="/apps/">
+    <Project Path="apps/OscTool/OscTool.csproj" />
+  </Folder>
   <Folder Name="/src/">
     <Project Path="src/Osc/Osc.csproj" />
   </Folder>
