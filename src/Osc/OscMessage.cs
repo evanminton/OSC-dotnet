@@ -31,10 +31,18 @@ public sealed class OscMessage : OscPacket
 {
     /// <summary>Creates a message.</summary>
     /// <param name="address">The OSC address pattern; must start with '/'.</param>
-    /// <param name="arguments">The arguments, in order.</param>
-    /// <remarks>Nested lists are copied (as <c>object?[]</c>), so changing them afterwards does not affect the message.</remarks>
+    /// <param name="arguments">
+    /// The arguments, in order. Passing a single <c>object?[]</c>, <c>string[]</c> or other
+    /// <see cref="IEnumerable{T}"/> of reference types supplies the whole argument list; to send it as one
+    /// array argument instead, cast it to <see cref="object"/>: <c>new OscMessage("/a", (object)names)</c>.
+    /// </param>
+    /// <remarks>
+    /// Nested lists (as <c>object?[]</c>) and blobs (as <c>byte[]</c>) are copied, so changing them afterwards
+    /// does not affect the message.
+    /// </remarks>
     /// <exception cref="ArgumentException">
-    /// The address is invalid, an argument has an unsupported type, or arrays nest deeper than <see cref="OscPacket.MaxNestingDepth"/>.
+    /// The address is invalid or a malformed pattern (e.g. an unclosed '[' or '{'), an argument has an
+    /// unsupported type, or arrays nest deeper than <see cref="OscPacket.MaxNestingDepth"/>.
     /// </exception>
     public OscMessage(string address, params IEnumerable<object?> arguments)
     {
@@ -44,6 +52,8 @@ public sealed class OscMessage : OscPacket
             throw new ArgumentException("An OSC address pattern must start with '/'.", nameof(address));
         if (address.Contains('\0'))
             throw new ArgumentException("An OSC address pattern cannot contain a null character.", nameof(address));
+        if (PatternError(address) is { } error)
+            throw new ArgumentException(error, nameof(address));
 
         Address = address;
         var args = arguments.ToArray();
@@ -103,8 +113,12 @@ public sealed class OscMessage : OscPacket
                     throw new ArgumentException("OSC-string arguments cannot contain a null character.");
                 tags.Append('s');
                 break;
-            case byte[]: tags.Append('b'); break;
-            case ReadOnlyMemory<byte>: tags.Append('b'); break;
+            case byte[] blob:
+                tags.Append('b');
+                return blob.Clone();
+            case ReadOnlyMemory<byte> blob:
+                tags.Append('b');
+                return blob.ToArray();
             case long: tags.Append('h'); break;
             case OscTimeTag: tags.Append('t'); break;
             case double: tags.Append('d'); break;
@@ -149,7 +163,6 @@ public sealed class OscMessage : OscPacket
             case float f: writer.WriteFloat32(f); break;
             case string s: writer.WriteString(s); break;
             case byte[] b: writer.WriteBlob(b); break;
-            case ReadOnlyMemory<byte> m: writer.WriteBlob(m.Span); break;
             case long h: writer.WriteInt64(h); break;
             case OscTimeTag t: writer.WriteUInt64(t.Value); break;
             case double d: writer.WriteFloat64(d); break;
@@ -171,6 +184,8 @@ public sealed class OscMessage : OscPacket
         var address = reader.ReadString();
         if (address.Length == 0 || address[0] != '/')
             throw new OscException("An OSC address pattern must start with '/'.");
+        if (PatternError(address) is { } error)
+            throw new OscException(error);
 
         // Older implementations may omit the type tag string; with no data after the address,
         // that is simply a message without arguments.
@@ -186,6 +201,10 @@ public sealed class OscMessage : OscPacket
             throw new OscException($"Message {address} has {reader.Remaining} bytes left over after its arguments.");
         return new OscMessage(address, args, typeTags);
     }
+
+    /// <summary>Returns why <paramref name="address"/> is not a valid address pattern, or null if it is.</summary>
+    private static string? PatternError(string address) =>
+        OscAddressPattern.ContainsWildcards(address) ? OscAddressPattern.GetError(address) : null;
 
     private static object?[] ReadArguments(ref OscReader reader, string tags, ref int index, int depth)
     {
@@ -206,7 +225,14 @@ public sealed class OscMessage : OscPacket
                 case 't': args.Add(new OscTimeTag(reader.ReadUInt64())); break;
                 case 'd': args.Add(reader.ReadFloat64()); break;
                 case 'S': args.Add(new OscSymbol(reader.ReadString())); break;
-                case 'c': args.Add((char)reader.ReadInt32()); break;
+                case 'c':
+                {
+                    var c = reader.ReadInt32();
+                    if (c is < char.MinValue or > char.MaxValue)
+                        throw new OscException($"Character argument 0x{c:X} is outside the range of a .NET char.");
+                    args.Add((char)c);
+                    break;
+                }
                 case 'r':
                 {
                     var b = reader.ReadFour();

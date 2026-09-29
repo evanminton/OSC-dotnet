@@ -22,8 +22,11 @@ public sealed class OscAddressPattern
         if (pattern.Length == 0 || pattern[0] != '/')
             throw new ArgumentException("An OSC address pattern must start with '/'.", nameof(pattern));
         Pattern = pattern;
-        _tokens = Compile(pattern);
+        _tokens = Compile(pattern, out var error) ?? throw new ArgumentException(error, nameof(pattern));
     }
+
+    /// <summary>Returns why <paramref name="pattern"/> (which starts with '/') cannot be compiled, or null if it can.</summary>
+    internal static string? GetError(string pattern) => Compile(pattern, out var error) is null ? error : null;
 
     /// <summary>The source pattern.</summary>
     public string Pattern { get; }
@@ -122,8 +125,9 @@ public sealed class OscAddressPattern
     /// <inheritdoc />
     public override string ToString() => Pattern;
 
-    private static Token[] Compile(string pattern)
+    private static Token[]? Compile(string pattern, out string? error)
     {
+        error = null;
         var tokens = new List<Token>();
         for (var i = 0; i < pattern.Length; i++)
         {
@@ -149,7 +153,10 @@ public sealed class OscAddressPattern
                 {
                     var close = pattern.IndexOf(']', i + 1);
                     if (close < 0)
-                        throw new ArgumentException($"Unclosed '[' at position {i} in address pattern \"{pattern}\".", nameof(pattern));
+                    {
+                        error = $"Unclosed '[' at position {i} in address pattern \"{pattern}\".";
+                        return null;
+                    }
                     tokens.Add(ParseClass(pattern.AsSpan(i + 1, close - i - 1)));
                     i = close;
                     break;
@@ -158,10 +165,16 @@ public sealed class OscAddressPattern
                 {
                     var close = pattern.IndexOf('}', i + 1);
                     if (close < 0)
-                        throw new ArgumentException($"Unclosed '{{' at position {i} in address pattern \"{pattern}\".", nameof(pattern));
+                    {
+                        error = $"Unclosed '{{' at position {i} in address pattern \"{pattern}\".";
+                        return null;
+                    }
                     var alternatives = pattern.Substring(i + 1, close - i - 1).Split(',');
                     if (alternatives.Any(a => a.Contains('/')))
-                        throw new ArgumentException($"Alternatives in {{...}} cannot contain '/' in address pattern \"{pattern}\".", nameof(pattern));
+                    {
+                        error = $"Alternatives in {{...}} cannot contain '/' in address pattern \"{pattern}\".";
+                        return null;
+                    }
                     tokens.Add(new Token(TokenKind.Alternatives) { Alternatives = alternatives });
                     i = close;
                     break;
