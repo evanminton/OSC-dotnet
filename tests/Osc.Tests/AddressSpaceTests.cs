@@ -63,6 +63,26 @@ public class AddressSpaceTests
     }
 
     [Fact]
+    public void Throwing_handler_does_not_stop_the_rest_of_the_dispatch()
+    {
+        var space = new OscAddressSpace();
+        var calls = new List<string>();
+        space.Register("/a", _ => throw new InvalidOperationException("first"));
+        space.Register("/a", _ => calls.Add("a2"));
+        space.Register("/b", _ => throw new FormatException("second"));
+        space.Register("/c", _ => calls.Add("c"));
+
+        var bundle = new OscBundle(OscTimeTag.Immediate,
+            new OscMessage("/a"), new OscBundle(OscTimeTag.Immediate, new OscMessage("/b")), new OscMessage("/c"));
+        var error = Assert.Throws<AggregateException>(() => space.Dispatch(bundle));
+
+        Assert.Equal(["a2", "c"], calls);
+        Assert.Collection(error.InnerExceptions,
+            e => Assert.Equal("first", Assert.IsType<InvalidOperationException>(e).Message),
+            e => Assert.Equal("second", Assert.IsType<FormatException>(e).Message));
+    }
+
+    [Fact]
     public void Disposing_registration_removes_handler()
     {
         var space = new OscAddressSpace();

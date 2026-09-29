@@ -202,6 +202,20 @@ public class MessageTests
     }
 
     [Fact]
+    public void Blobs_cannot_be_changed_through_the_message()
+    {
+        var message = RoundTrip(new OscMessage("/b", new byte[] { 1, 2, 3 }));
+        var bytes = message.ToBytes();
+
+        Assert.IsType<ReadOnlyMemory<byte>>(message.Arguments[0]);
+        Assert.Equal(new byte[] { 1, 2, 3 }, message.Get<ReadOnlyMemory<byte>>(0).ToArray());
+        message.Get<byte[]>(0)[0] = 9;
+
+        Assert.NotSame(message.Get<byte[]>(0), message.Get<byte[]>(0));
+        Assert.Equal(bytes, message.ToBytes());
+    }
+
+    [Fact]
     public void Largest_char_round_trips()
     {
         Assert.Equal(char.MaxValue, RoundTrip(new OscMessage("/c", char.MaxValue)).Get<char>(0));

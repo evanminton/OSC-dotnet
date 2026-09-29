@@ -13,7 +13,7 @@ namespace Osc;
 ///   <item><term><see cref="int"/></term><description><c>i</c> int32</description></item>
 ///   <item><term><see cref="float"/></term><description><c>f</c> float32</description></item>
 ///   <item><term><see cref="string"/></term><description><c>s</c> OSC-string</description></item>
-///   <item><term><see cref="byte"/>[] / <see cref="ReadOnlyMemory{T}"/></term><description><c>b</c> OSC-blob (decoded as byte[])</description></item>
+///   <item><term><see cref="byte"/>[] / <see cref="ReadOnlyMemory{T}"/></term><description><c>b</c> OSC-blob (stored and decoded as ReadOnlyMemory&lt;byte&gt;)</description></item>
 ///   <item><term><see cref="long"/></term><description><c>h</c> int64</description></item>
 ///   <item><term><see cref="OscTimeTag"/></term><description><c>t</c> time tag</description></item>
 ///   <item><term><see cref="double"/></term><description><c>d</c> float64</description></item>
@@ -37,8 +37,8 @@ public sealed class OscMessage : OscPacket
     /// array argument instead, cast it to <see cref="object"/>: <c>new OscMessage("/a", (object)names)</c>.
     /// </param>
     /// <remarks>
-    /// Nested lists (as <c>object?[]</c>) and blobs (as <c>byte[]</c>) are copied, so changing them afterwards
-    /// does not affect the message.
+    /// Nested lists (as <c>object?[]</c>) and blobs (as <see cref="ReadOnlyMemory{T}"/> of <see cref="byte"/>) are
+    /// copied, so changing them afterwards does not affect the message.
     /// </remarks>
     /// <exception cref="ArgumentException">
     /// The address is invalid or a malformed pattern (e.g. an unclosed '[' or '{'), an argument has an
@@ -81,10 +81,17 @@ public sealed class OscMessage : OscPacket
     public string TypeTags { get; }
 
     /// <summary>Gets the argument at <paramref name="index"/> as <typeparamref name="T"/>.</summary>
+    /// <remarks>
+    /// Blobs are stored as <see cref="ReadOnlyMemory{T}"/> of <see cref="byte"/>; asking for a <c>byte[]</c>
+    /// returns a new copy, so changing it does not affect the message.
+    /// </remarks>
     /// <exception cref="InvalidCastException">The argument is not a <typeparamref name="T"/>.</exception>
-    public T Get<T>(int index) => Arguments[index] is T value
-        ? value
-        : throw new InvalidCastException($"Argument {index} of {Address} is {Arguments[index]?.GetType().Name ?? "null"}, not {typeof(T).Name}.");
+    public T Get<T>(int index) => Arguments[index] switch
+    {
+        T value => value,
+        ReadOnlyMemory<byte> blob when typeof(T) == typeof(byte[]) => (T)(object)blob.ToArray(),
+        var other => throw new InvalidCastException($"Argument {index} of {Address} is {other?.GetType().Name ?? "null"}, not {typeof(T).Name}."),
+    };
 
     /// <inheritdoc />
     public override string ToString() =>
@@ -94,13 +101,13 @@ public sealed class OscMessage : OscPacket
     {
         null => "nil",
         string s => $"\"{s}\"",
-        byte[] b => $"blob[{b.Length}]",
+        ReadOnlyMemory<byte> b => $"blob[{b.Length}]",
         object?[] a => $"[{string.Join(" ", a.Select(Format))}]",
         IFormattable f => f.ToString(null, System.Globalization.CultureInfo.InvariantCulture),
         _ => value.ToString() ?? "",
     };
 
-    /// <summary>Appends the type tag for <paramref name="arg"/> and returns the value to store: the argument itself, or a copy of a list.</summary>
+    /// <summary>Appends the type tag for <paramref name="arg"/> and returns the value to store: the argument itself, or a copy of a list or blob.</summary>
     private static object? AppendTypeTag(StringBuilder tags, object? arg, int depth)
     {
         switch (arg)
@@ -115,10 +122,10 @@ public sealed class OscMessage : OscPacket
                 break;
             case byte[] blob:
                 tags.Append('b');
-                return blob.Clone();
+                return new ReadOnlyMemory<byte>([.. blob]);
             case ReadOnlyMemory<byte> blob:
                 tags.Append('b');
-                return blob.ToArray();
+                return new ReadOnlyMemory<byte>(blob.ToArray());
             case long: tags.Append('h'); break;
             case OscTimeTag: tags.Append('t'); break;
             case double: tags.Append('d'); break;
@@ -162,7 +169,7 @@ public sealed class OscMessage : OscPacket
             case int i: writer.WriteInt32(i); break;
             case float f: writer.WriteFloat32(f); break;
             case string s: writer.WriteString(s); break;
-            case byte[] b: writer.WriteBlob(b); break;
+            case ReadOnlyMemory<byte> b: writer.WriteBlob(b.Span); break;
             case long h: writer.WriteInt64(h); break;
             case OscTimeTag t: writer.WriteUInt64(t.Value); break;
             case double d: writer.WriteFloat64(d); break;
@@ -220,7 +227,7 @@ public sealed class OscMessage : OscPacket
                 case 'i': args.Add(reader.ReadInt32()); break;
                 case 'f': args.Add(reader.ReadFloat32()); break;
                 case 's': args.Add(reader.ReadString()); break;
-                case 'b': args.Add(reader.ReadBlob()); break;
+                case 'b': args.Add(new ReadOnlyMemory<byte>(reader.ReadBlob())); break;
                 case 'h': args.Add(reader.ReadInt64()); break;
                 case 't': args.Add(new OscTimeTag(reader.ReadUInt64())); break;
                 case 'd': args.Add(reader.ReadFloat64()); break;

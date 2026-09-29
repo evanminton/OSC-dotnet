@@ -64,22 +64,42 @@ public sealed class OscAddressSpace
     /// dispatches each of its elements in order.
     /// </summary>
     /// <returns>The number of handler invocations.</returns>
-    public int Dispatch(OscPacket packet) => Dispatch(packet, OscTimeTag.Immediate);
-
-    private int Dispatch(OscPacket packet, OscTimeTag timeTag)
+    /// <exception cref="AggregateException">
+    /// One or more handlers threw. Every matching handler still runs; the exceptions are collected in
+    /// the order they were thrown.
+    /// </exception>
+    public int Dispatch(OscPacket packet)
     {
         ArgumentNullException.ThrowIfNull(packet);
+        List<Exception>? errors = null;
+        var count = Dispatch(packet, OscTimeTag.Immediate, ref errors);
+        if (errors is not null)
+            throw new AggregateException("One or more OSC method handlers threw.", errors);
+        return count;
+    }
+
+    private int Dispatch(OscPacket packet, OscTimeTag timeTag, ref List<Exception>? errors)
+    {
         switch (packet)
         {
             case OscBundle bundle:
                 var total = 0;
                 foreach (var element in bundle.Elements)
-                    total += Dispatch(element, bundle.TimeTag);
+                    total += Dispatch(element, bundle.TimeTag, ref errors);
                 return total;
             case OscMessage message:
                 var handlers = GetHandlers(message.Address);
                 foreach (var handler in handlers)
-                    handler(message, timeTag);
+                {
+                    try
+                    {
+                        handler(message, timeTag);
+                    }
+                    catch (Exception e)
+                    {
+                        (errors ??= []).Add(e);
+                    }
+                }
                 return handlers.Count;
             default:
                 throw new ArgumentException($"Unknown packet type {packet.GetType()}.", nameof(packet));

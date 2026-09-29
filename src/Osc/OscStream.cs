@@ -39,10 +39,19 @@ public static class OscStreamExtensions
     /// <summary>
     /// Reads packets until the stream ends, using <paramref name="framing"/> (SLIP by default, per OSC 1.1).
     /// </summary>
-    /// <exception cref="OscException">A frame is not a well-formed OSC packet, or a length-prefixed frame is truncated or oversized.</exception>
+    /// <param name="stream">The stream to read from.</param>
+    /// <param name="framing">How packets are delimited.</param>
+    /// <param name="maxPacketSize">The largest packet accepted; larger SLIP frames are dropped.</param>
+    /// <param name="cancellationToken">Stops reading.</param>
+    /// <param name="onInvalidPacket">
+    /// Called with the decoding error for each frame that is not a well-formed OSC packet. Such frames are
+    /// skipped and reading continues with the next frame.
+    /// </param>
+    /// <exception cref="OscException">A length-prefixed frame is truncated or has an out-of-range size, so the stream cannot be resynchronized.</exception>
     public static async IAsyncEnumerable<OscPacket> ReadOscPacketsAsync(this Stream stream,
         OscFraming framing = OscFraming.Slip, int maxPacketSize = 1 << 20,
-        [EnumeratorCancellation] CancellationToken cancellationToken = default)
+        [EnumeratorCancellation] CancellationToken cancellationToken = default,
+        Action<OscException>? onInvalidPacket = null)
     {
         ArgumentNullException.ThrowIfNull(stream);
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(maxPacketSize);
@@ -55,7 +64,10 @@ public static class OscStreamExtensions
             while ((read = await stream.ReadAsync(buffer, cancellationToken).ConfigureAwait(false)) > 0)
             {
                 foreach (var frame in decoder.Feed(buffer.AsSpan(0, read)))
-                    yield return OscPacket.Parse(frame);
+                {
+                    if (TryParse(frame, onInvalidPacket) is { } packet)
+                        yield return packet;
+                }
             }
         }
         else
@@ -69,8 +81,23 @@ public static class OscStreamExtensions
                 var body = new byte[size];
                 if (!await ReadExactlyOrEndAsync(stream, body, cancellationToken).ConfigureAwait(false))
                     throw new OscException("Stream ended in the middle of a length-prefixed OSC packet.");
-                yield return OscPacket.Parse(body);
+                if (TryParse(body, onInvalidPacket) is { } packet)
+                    yield return packet;
             }
+        }
+    }
+
+    /// <summary>Decodes one frame, or reports the error to <paramref name="onInvalidPacket"/> and returns null.</summary>
+    private static OscPacket? TryParse(byte[] frame, Action<OscException>? onInvalidPacket)
+    {
+        try
+        {
+            return OscPacket.Parse(frame);
+        }
+        catch (OscException e)
+        {
+            onInvalidPacket?.Invoke(e);
+            return null;
         }
     }
 
