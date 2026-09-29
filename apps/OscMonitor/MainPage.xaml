@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage
+    x:Class="OscMonitor.MainPage"
+    xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml">
+
+    <Grid Padding="20" RowSpacing="12" RowDefinitions="Auto,Auto,Auto,Auto,*">
+
+        <Label Grid.Row="0" Text="Send" FontSize="18" FontFamily="OpenSansSemibold" />
+
+        <Grid Grid.Row="1" ColumnSpacing="8" ColumnDefinitions="2*,*,3*,4*,Auto">
+            <Entry x:Name="HostEntry" Grid.Column="0" Placeholder="Host" Text="127.0.0.1" />
+            <Entry x:Name="SendPortEntry" Grid.Column="1" Placeholder="Port" Text="9000" Keyboard="Numeric" />
+            <Entry x:Name="AddressEntry" Grid.Column="2" Placeholder="/address" Text="/test" />
+            <Entry x:Name="ArgumentsEntry" Grid.Column="3" Placeholder="Arguments, e.g. 60 0.8 true hello" />
+            <Button Grid.Column="4" Text="Send" Clicked="OnSendClicked" />
+        </Grid>
+
+        <Grid Grid.Row="2" ColumnSpacing="8" ColumnDefinitions="Auto,Auto,Auto,*,Auto">
+            <Label Grid.Column="0" Text="Listen on UDP port" FontSize="18" FontFamily="OpenSansSemibold" VerticalOptions="Center" />
+            <Entry x:Name="ListenPortEntry" Grid.Column="1" Text="9000" Keyboard="Numeric" WidthRequest="90" />
+            <Button x:Name="ListenButton" Grid.Column="2" Text="Start" Clicked="OnListenClicked" />
+            <Label x:Name="StatusLabel" Grid.Column="3" VerticalOptions="Center" />
+            <Button Grid.Column="4" Text="Clear" Clicked="OnClearClicked" />
+        </Grid>
+
+        <BoxView Grid.Row="3" HeightRequest="1" Color="{AppThemeBinding Light={StaticResource Gray200}, Dark={StaticResource Gray600}}" />
+
+        <CollectionView x:Name="Log" Grid.Row="4" ItemsUpdatingScrollMode="KeepLastItemInView">
+            <CollectionView.ItemTemplate>
+                <DataTemplate x:DataType="x:String">
+                    <Label Text="{Binding .}" FontFamily="{OnPlatform WinUI=Consolas, MacCatalyst=Menlo}" FontSize="13" Padding="0,2" />
+                </DataTemplate>
+            </CollectionView.ItemTemplate>
+        </CollectionView>
+    </Grid>
+</ContentPage>
