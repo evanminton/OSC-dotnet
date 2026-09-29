@@ -19,6 +19,10 @@ public class DecodingErrorTests
     [InlineData("2f610000 2c000000 00000001")]         // trailing bytes after arguments
     [InlineData("2f610000 00000001")]                  // data but no type tag string
     [InlineData("2f610001")]                           // non-null string padding
+    [InlineData("2f615b00 2c000000")]                  // address pattern with unclosed '['
+    [InlineData("2f617b62 00000000 2c000000")]         // address pattern with unclosed '{'
+    [InlineData("2f610000 2c630000 0001f600")]         // 'c' argument outside the range of char
+    [InlineData("2f610000 2c630000 ffffffff")]         // negative 'c' argument
     public void Malformed_messages_throw(string hex)
     {
         var bytes = Hex(hex);

@@ -9,15 +9,22 @@ public sealed class OscBundle : OscPacket
     private static ReadOnlySpan<byte> BundleTag => "#bundle\0"u8;
 
     /// <summary>Creates a bundle.</summary>
+    /// <exception cref="ArgumentException">An element is null, or bundles would nest deeper than <see cref="OscPacket.MaxNestingDepth"/>.</exception>
     public OscBundle(OscTimeTag timeTag, params IEnumerable<OscPacket> elements)
     {
         ArgumentNullException.ThrowIfNull(elements);
         var list = elements.ToArray();
         if (Array.IndexOf(list, null) >= 0)
             throw new ArgumentException("Bundle elements cannot be null.", nameof(elements));
+        Depth = 1 + list.OfType<OscBundle>().Select(b => b.Depth).DefaultIfEmpty(0).Max();
+        if (Depth > MaxNestingDepth)
+            throw new ArgumentException($"Bundles cannot nest more than {MaxNestingDepth} deep.", nameof(elements));
         TimeTag = timeTag;
         Elements = list;
     }
+
+    /// <summary>Levels of bundle nesting, counting this one: 1 when no element is a bundle.</summary>
+    private int Depth { get; }
 
     /// <summary>When the bundle's contents should take effect.</summary>
     public OscTimeTag TimeTag { get; }
@@ -62,10 +69,12 @@ public sealed class OscBundle : OscPacket
         }
     }
 
-    internal static OscBundle ParseBody(ReadOnlySpan<byte> data)
+    internal static OscBundle ParseBody(ReadOnlySpan<byte> data, int depth)
     {
         if (data.Length < 16 || !data[..8].SequenceEqual(BundleTag))
             throw new OscException("An OSC bundle must start with \"#bundle\" and a time tag.");
+        if (depth > MaxNestingDepth)
+            throw new OscException($"Bundles nest more than {MaxNestingDepth} deep.");
 
         var reader = new OscReader(data[8..]);
         var timeTag = new OscTimeTag(reader.ReadUInt64());
@@ -77,7 +86,7 @@ public sealed class OscBundle : OscPacket
                 throw new OscException($"Bundle element size must be a positive multiple of 4, but was {size}.");
             if (size > reader.Remaining)
                 throw new OscException($"Bundle element size {size} exceeds the {reader.Remaining} bytes remaining.");
-            elements.Add(Parse(reader.ReadRaw(size)));
+            elements.Add(Parse(reader.ReadRaw(size), depth + 1));
         }
         return new OscBundle(timeTag, elements);
     }

@@ -31,8 +31,19 @@ public sealed class OscMessage : OscPacket
 {
     /// <summary>Creates a message.</summary>
     /// <param name="address">The OSC address pattern; must start with '/'.</param>
-    /// <param name="arguments">The arguments, in order.</param>
-    /// <exception cref="ArgumentException">The address is invalid or an argument has an unsupported type.</exception>
+    /// <param name="arguments">
+    /// The arguments, in order. Passing a single <c>object?[]</c>, <c>string[]</c> or other
+    /// <see cref="IEnumerable{T}"/> of reference types supplies the whole argument list; to send it as one
+    /// array argument instead, cast it to <see cref="object"/>: <c>new OscMessage("/a", (object)names)</c>.
+    /// </param>
+    /// <remarks>
+    /// Nested lists (as <c>object?[]</c>) and blobs (as <c>byte[]</c>) are copied, so changing them afterwards
+    /// does not affect the message.
+    /// </remarks>
+    /// <exception cref="ArgumentException">
+    /// The address is invalid or a malformed pattern (e.g. an unclosed '[' or '{'), an argument has an
+    /// unsupported type, or arrays nest deeper than <see cref="OscPacket.MaxNestingDepth"/>.
+    /// </exception>
     public OscMessage(string address, params IEnumerable<object?> arguments)
     {
         ArgumentNullException.ThrowIfNull(address);
@@ -41,12 +52,14 @@ public sealed class OscMessage : OscPacket
             throw new ArgumentException("An OSC address pattern must start with '/'.", nameof(address));
         if (address.Contains('\0'))
             throw new ArgumentException("An OSC address pattern cannot contain a null character.", nameof(address));
+        if (PatternError(address) is { } error)
+            throw new ArgumentException(error, nameof(address));
 
         Address = address;
         var args = arguments.ToArray();
         var tags = new StringBuilder(",", args.Length + 1);
-        foreach (var arg in args)
-            AppendTypeTag(tags, arg);
+        for (var i = 0; i < args.Length; i++)
+            args[i] = AppendTypeTag(tags, args[i], depth: 0);
         Arguments = args;
         TypeTags = tags.ToString();
     }
@@ -87,7 +100,8 @@ public sealed class OscMessage : OscPacket
         _ => value.ToString() ?? "",
     };
 
-    private static void AppendTypeTag(StringBuilder tags, object? arg)
+    /// <summary>Appends the type tag for <paramref name="arg"/> and returns the value to store: the argument itself, or a copy of a list.</summary>
+    private static object? AppendTypeTag(StringBuilder tags, object? arg, int depth)
     {
         switch (arg)
         {
@@ -99,8 +113,12 @@ public sealed class OscMessage : OscPacket
                     throw new ArgumentException("OSC-string arguments cannot contain a null character.");
                 tags.Append('s');
                 break;
-            case byte[]: tags.Append('b'); break;
-            case ReadOnlyMemory<byte>: tags.Append('b'); break;
+            case byte[] blob:
+                tags.Append('b');
+                return blob.Clone();
+            case ReadOnlyMemory<byte> blob:
+                tags.Append('b');
+                return blob.ToArray();
             case long: tags.Append('h'); break;
             case OscTimeTag: tags.Append('t'); break;
             case double: tags.Append('d'); break;
@@ -115,14 +133,18 @@ public sealed class OscMessage : OscPacket
             case bool b: tags.Append(b ? 'T' : 'F'); break;
             case OscImpulse: tags.Append('I'); break;
             case IList list:
+                if (depth >= MaxNestingDepth)
+                    throw new ArgumentException($"Array arguments cannot nest more than {MaxNestingDepth} deep.");
                 tags.Append('[');
-                foreach (var item in list)
-                    AppendTypeTag(tags, item);
+                var copy = new object?[list.Count];
+                for (var i = 0; i < copy.Length; i++)
+                    copy[i] = AppendTypeTag(tags, list[i], depth + 1);
                 tags.Append(']');
-                break;
+                return copy;
             default:
                 throw new ArgumentException($"Arguments of type {arg.GetType().FullName} cannot be encoded as OSC.");
         }
+        return arg;
     }
 
     internal override void Write(ref OscWriter writer)
@@ -141,7 +163,6 @@ public sealed class OscMessage : OscPacket
             case float f: writer.WriteFloat32(f); break;
             case string s: writer.WriteString(s); break;
             case byte[] b: writer.WriteBlob(b); break;
-            case ReadOnlyMemory<byte> m: writer.WriteBlob(m.Span); break;
             case long h: writer.WriteInt64(h); break;
             case OscTimeTag t: writer.WriteUInt64(t.Value); break;
             case double d: writer.WriteFloat64(d); break;
@@ -163,6 +184,8 @@ public sealed class OscMessage : OscPacket
         var address = reader.ReadString();
         if (address.Length == 0 || address[0] != '/')
             throw new OscException("An OSC address pattern must start with '/'.");
+        if (PatternError(address) is { } error)
+            throw new OscException(error);
 
         // Older implementations may omit the type tag string; with no data after the address,
         // that is simply a message without arguments.
@@ -173,14 +196,21 @@ public sealed class OscMessage : OscPacket
 
         var typeTags = reader.ReadString();
         var index = 1;
-        var args = ReadArguments(ref reader, typeTags, ref index, nested: false);
+        var args = ReadArguments(ref reader, typeTags, ref index, depth: 0);
         if (!reader.IsAtEnd)
             throw new OscException($"Message {address} has {reader.Remaining} bytes left over after its arguments.");
         return new OscMessage(address, args, typeTags);
     }
 
-    private static object?[] ReadArguments(ref OscReader reader, string tags, ref int index, bool nested)
+    /// <summary>Returns why <paramref name="address"/> is not a valid address pattern, or null if it is.</summary>
+    private static string? PatternError(string address) =>
+        OscAddressPattern.ContainsWildcards(address) ? OscAddressPattern.GetError(address) : null;
+
+    private static object?[] ReadArguments(ref OscReader reader, string tags, ref int index, int depth)
     {
+        var nested = depth > 0;
+        if (depth > MaxNestingDepth)
+            throw new OscException($"Arrays nest more than {MaxNestingDepth} deep in type tag string.");
         var args = new List<object?>();
         while (index < tags.Length)
         {
@@ -195,7 +225,14 @@ public sealed class OscMessage : OscPacket
                 case 't': args.Add(new OscTimeTag(reader.ReadUInt64())); break;
                 case 'd': args.Add(reader.ReadFloat64()); break;
                 case 'S': args.Add(new OscSymbol(reader.ReadString())); break;
-                case 'c': args.Add((char)reader.ReadInt32()); break;
+                case 'c':
+                {
+                    var c = reader.ReadInt32();
+                    if (c is < char.MinValue or > char.MaxValue)
+                        throw new OscException($"Character argument 0x{c:X} is outside the range of a .NET char.");
+                    args.Add((char)c);
+                    break;
+                }
                 case 'r':
                 {
                     var b = reader.ReadFour();
@@ -212,7 +249,7 @@ public sealed class OscMessage : OscPacket
                 case 'F': args.Add(false); break;
                 case 'N': args.Add(null); break;
                 case 'I': args.Add(OscImpulse.Value); break;
-                case '[': args.Add(ReadArguments(ref reader, tags, ref index, nested: true)); break;
+                case '[': args.Add(ReadArguments(ref reader, tags, ref index, depth + 1)); break;
                 case ']':
                     if (!nested)
                         throw new OscException($"Unmatched ']' in type tag string \"{tags}\".");

@@ -165,4 +165,45 @@ public class MessageTests
         message.WriteTo(writer);
         Assert.Equal(message.ToBytes(), writer.WrittenSpan.ToArray());
     }
+
+    [Theory]
+    [InlineData("/a[")]
+    [InlineData("/a{b")]
+    [InlineData("/{a/b}")]
+    public void Malformed_address_patterns_are_rejected(string address)
+    {
+        Assert.Throws<ArgumentException>(() => new OscMessage(address));
+    }
+
+    [Fact]
+    public void Single_reference_type_array_is_the_argument_list_unless_cast_to_object()
+    {
+        var names = new[] { "x", "y" };
+        Assert.Equal(",ss", new OscMessage("/a", names).TypeTags);
+        Assert.Equal(",[ss]", new OscMessage("/a", (object)names).TypeTags);
+    }
+
+    [Fact]
+    public void Blobs_are_copied_so_later_changes_do_not_affect_the_message()
+    {
+        var blob = new byte[] { 1, 2, 3 };
+        var memory = new byte[] { 4, 5, 6 };
+        var message = new OscMessage("/b", blob, new ReadOnlyMemory<byte>(memory));
+        var bytes = message.ToBytes();
+        var hash = message.GetHashCode();
+
+        blob[0] = 9;
+        memory[0] = 9;
+
+        Assert.Equal(bytes, message.ToBytes());
+        Assert.Equal(hash, message.GetHashCode());
+        Assert.Equal(new byte[] { 1, 2, 3 }, message.Get<byte[]>(0));
+        Assert.Equal(new byte[] { 4, 5, 6 }, message.Get<byte[]>(1));
+    }
+
+    [Fact]
+    public void Largest_char_round_trips()
+    {
+        Assert.Equal(char.MaxValue, RoundTrip(new OscMessage("/c", char.MaxValue)).Get<char>(0));
+    }
 }
