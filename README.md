@@ -73,3 +73,18 @@ await foreach (var packet in stream.ReadOscPacketsAsync())
 ```
 dotnet test
 ```
+
+## osctool
+
+`apps/OscTool` is a small command-line tool built on the library:
+
+```
+osctool send 127.0.0.1 9000 /synth/1/note 60 0.8 true hello
+osctool listen 9000
+```
+
+Arguments are sent as `int`, `float`, `true`/`false`, `nil`, or string; prefix `s:` to force a string. To build a standalone Windows exe:
+
+```
+dotnet publish apps/OscTool -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -o artifacts/osctool
+```
